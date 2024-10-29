@@ -1,0 +1,204 @@
+import rag_proof_of_concept as ragpoc
+from langchain_openai import ChatOpenAI
+
+config = ragpoc.utils.load_config()
+
+history = ""
+
+style = "detailed professional"
+
+query_text = "How should a bank prepare for EBA stress testing according to my documents?"
+
+
+llm = ChatOpenAI(model=config['llm']['model'])
+client = ragpoc.vdb.get_weaviate_client(local=config['vdb']['local'])
+
+# The search uses the hybrid method as below:
+# see https://github.com/langchain-ai/langchain-weaviate/blob/a76c606089bf464a30ecaa74dccfd738f0d09183/libs/weaviate/langchain_weaviate/vectorstores.py#L279
+# collection = client.collections.get(config['vdb']['collection'])
+# response = collection.query.hybrid(
+#     query="biology",
+#     limit=2
+# )
+
+
+vector_store = ragpoc.vdb.get_vector_store(client, config['vdb']['collection'])
+
+assessment_outcome = ragpoc.chains.assess_query(query_text, history, llm)
+
+# Note for the future on how to add Weaviate filters
+
+test_search = vector_store.similarity_search_with_score(
+    query = assessment_outcome['context_request'],
+    k = 10,
+    alpha = 0.5,
+    return_uuids = True
+)
+
+'temporary_data\\September_3\\theguardian.com-Defiant Netanyahu insists Israel must control strategic border corridor in Gaza.pdf'
+
+
+[[x[0].metadata['page'], [x[0].metadata['total_pages']], [x[0].metadata['file_path']]] for x in test_search]
+
+
+# Manual preliminary answer
+import re, json
+from langchain.schema.output_parser import StrOutputParser
+from langchain.prompts import ChatPromptTemplate
+
+
+def parse_page(metadata) -> str:
+        try:    
+            return str(int(metadata['page'])) + '/' + str(int(metadata['total_pages']))
+        except Exception as e:
+            return 1/1
+
+import os
+def get_file_url(file_path, page):
+    # Assuming the files are served from a local server or a specific URL pattern
+    base_url = os.path.join(os.getcwd(), file_path)
+    full_url = re.sub(r'\\+', '/', f"file:///{base_url}#page={page}")
+    return full_url
+
+
+def context_prep(vdb_response_list: list[dict]) -> list[dict]:
+    unique_uuids = set()
+    result = []
+    
+    for vdb_response in vdb_response_list:
+        for x in vdb_response:
+            uuid = x[0].metadata['uuid']
+            if uuid not in unique_uuids:
+                unique_uuids.add(uuid)
+                result.append({
+                    'uuid': uuid,
+                    'content': x[0].page_content
+                })
+    
+    return result
+
+
+def extract_uuid_to_doc_map(vdb_responses: list) -> dict:
+    uuid_to_doc_map = {}
+    for vdb_response in vdb_responses:
+        for x in vdb_response:
+            uuid = x[0].metadata['uuid']
+            file_path = re.split(r'[\\/]', x[0].metadata['source'])[-1]
+            page = parse_page(x[0].metadata).split('/')[0]
+            url = get_file_url(file_path, page)
+            reference = f"[{file_path}, p. {page}]({url})"
+            uuid_to_doc_map[uuid] = reference
+    return uuid_to_doc_map
+
+
+def replace_uuids_in_text(text, uuid_to_doc_map):
+    # Find all UUIDs in the text
+    uuids = re.findall(r'\[([0-9a-fA-F-]{36})\]', text)
+    
+    for uuid in uuids:
+        # Use fuzzy matching to find the best match in the dictionary
+        best_match = process.extractOne(uuid, uuid_to_doc_map.keys(), score_cutoff=90)
+        if best_match:
+            best_uuid = best_match[0]
+            document_name = uuid_to_doc_map[best_uuid]
+            text = text.replace(f'{uuid}', document_name)
+    
+    return text
+
+# Challenge: Weaviate object id is not inclued in output of invoke
+vs_query1 = vector_store.similarity_search_with_score(
+    query = assessment_outcome,
+    k = 10,
+    alpha = 0.5,
+    #filters = wvc.query.Filter.by_property("total_pages").equal(196),
+    return_uuids = True
+)
+
+context1 = context_prep([vs_query1])
+
+def get_rag_preliminary_answer_prompt() -> ChatPromptTemplate:
+    template = """You are an assistant for question-answering tasks. Your answer will be passed to json.loads, it should be pure JSON without any Python comments, chunk markers, or other non-JSON elements. Include keys "answer" and "context_request" following the instructions below and using the Question, Context and Conversation history provided at the bottom.
+
+* answer: Use the following pieces of retrieved context to answer the question, and any additional context you may have. Make the user aware of any contradictions or erroneous knowledge implied by the question. Keep the answer concise. For each point in your answer cite the corresponding context uuid in square brackets. Spread references evenly across your answer, avoid citing two uuids in a row and do not print place references in bulk at the end. Your answer must be understandable to an uninformed reader. Use a {style} writing style, no matter what the style of the question, context and history is. Do not repeat the question. Parts of the context may be irrelevant. If the overall context is not helpful, ignore it and disclaim that the answer is based on your general knowledge.
+
+* context_request: State further concepts related to the question. Just state them without using the word concepts or other metalanguage.
+     
+Question: {question}
+Context: {context}
+Conversation history: {history}"""
+
+    return ChatPromptTemplate.from_template(template)
+
+
+prompt_answer = get_rag_preliminary_answer_prompt()
+
+answer_chain = (
+    prompt_answer
+    | llm
+    | StrOutputParser()
+)
+
+response = answer_chain.invoke({
+    'context': context1, 
+    'question': query_text,
+    'history': history,
+    'style': style})
+
+response_content = json.loads(response)
+
+vs_query2 = vector_store.similarity_search_with_score(
+    query = response_content['context_request'],
+    k = 10,
+    alpha = 0.5,
+    #filters = wvc.query.Filter.by_property("total_pages").equal(196),
+    return_uuids = True
+)
+
+context = context_prep([vs_query1, vs_query2])
+
+
+uuid_to_doc_map = extract_uuid_to_doc_map([vs_query1, vs_query2])
+
+
+# --------------------------------------------------------------------------------------------------
+# Review RAG response
+
+def get_rag_review_prompt() -> ChatPromptTemplate:
+    template = """Improve the clarity and ease of understanding of the answer at the bottom.
+- Ensure that it uses the provided context optimally and that it can be understood by a person who is not familiar with the topic and fits the conversation history.
+- Ensure references are spread evenly across the answer with at most one reference per assertion, so that the reader can find the source of each piece of information.
+- Use markdown but do not add a title.
+- Make sure that the writing style is "{style}", no matter what the style of the question, context and history is.
+- You may use bullet points but only if they add clarity to the answer.
+- Do not repeat the question.
+- Make sure to maintain a good conversation flow, the question that you are answering is provided at the bottom for reference.
+- If the context is irrelevant and unrelated to the answer, disclaim that the answer is based on your general knowledge.
+
+Question: {question}
+
+Context: {context}
+
+Conversation history: {history}
+
+Answer: {answer}"""
+
+    return ChatPromptTemplate.from_template(template)
+
+
+prompt_review = get_rag_review_prompt()
+
+review_chain = (
+    prompt_review
+    | llm
+    | StrOutputParser()
+)
+
+
+reviewed_response = review_chain.invoke({
+    'context': context, 
+    'question': query_text,
+    'answer': response,
+    'history': history,
+    'style': style})
+
+replace_uuids_in_text(reviewed_response, uuid_to_doc_map)

@@ -1,0 +1,5 @@
+label: count_documents
+description: Request to count documents relevant to a topic or keyword.
+avatars:
+  - "count documents relevant"
+  - "count relevant documents"

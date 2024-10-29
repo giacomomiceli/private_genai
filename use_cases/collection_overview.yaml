@@ -1,0 +1,4 @@
+label: collection_overview
+description: Request to provide a summary of the overall contents of the document collection.
+avatars:
+  - "summary of the overall contents"

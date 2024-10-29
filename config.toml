@@ -1,0 +1,29 @@
+# Vector database configuration (Weaviate)
+[vdb]
+# local: if true, a local instance with default port configuration must be running; if false, the environment variables
+# WEAVIATE_URL and WEAVIATE_API_KEY must be defined.
+local = true
+# collection: the name of the collection in Weaviate used to store the document data. Corresponds to the parameter
+# index_name in LangChain.
+collection = "RAG_Documents_CCAR"
+chunk_size = 2000
+sentences_per_summary = 5
+include_chunk_summaries = false
+summarization_batch_size = 4
+initialize_use_case_vs = false
+
+# Data source configuration
+[data]
+# path: path to the directory containing the documents to load
+path = "temporary_data"
+http_server = true
+
+# Language model configuration
+[llm]
+model = "gpt-4o"
+input_tokens_target = 5000
+
+# Chatbot configuration
+[chatbot]
+conversation_style = "concise professional"
+verbose_logging = true

@@ -1,0 +1,48 @@
+from gradio_client import Client
+import json
+
+text = "Task: Describe a nice day using five words. Answer: "
+
+messages = [
+    {"role": "system", "content": "Answer in json format."},
+    {"role": "user", "content": "Categorize the tone and topic of the following sentence using the keys 'tone' and 'topic': Today we had an awesome breakfast at home."},
+]
+
+client = Client("https://6d1bf44d1bade4d42d.gradio.live/")
+
+
+result_model_name = client.predict(
+    api_name="/model_name"
+)
+print(result_model_name)
+
+result_gpu_name = client.predict(
+    api_name="/gpu_name"
+)
+print(result_gpu_name)
+
+result_text = client.predict(
+    prompt=json.dumps(text),
+    max_new_tokens=64,
+    api_name="/generate"
+)
+print(result_text)
+
+result_messages = client.predict(
+    prompt=json.dumps(messages),
+    max_new_tokens=64,
+    api_name="/generate"
+)
+print(result_messages)
+
+result_measure_text = client.predict(
+    prompt=json.dumps(text),
+    api_name="/measure_prompt"
+)
+print(result_measure_text)
+
+result_measure_messages = client.predict(
+    prompt=json.dumps(messages),
+    api_name="/measure_prompt"
+)
+print(result_measure_messages)

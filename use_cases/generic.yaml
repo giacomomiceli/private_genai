@@ -1,0 +1,4 @@
+label: generic
+description: Query that will be handled by the generic procedure.
+avatars:
+  - "specific topic"

@@ -1,0 +1,65 @@
+import json
+import rag_proof_of_concept as ragpoc
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.schema.output_parser import StrOutputParser
+
+config = ragpoc.utils.load_config()
+
+llm = ChatOpenAI(model=config['llm']['model'])
+client = ragpoc.vdb.get_weaviate_client(local=config['vdb']['local'])
+vector_store = ragpoc.vdb.get_vector_store(client, config['vdb']['collection'])
+
+def get_query_preprocessing_prompt() -> PromptTemplate:
+
+    template = """You are an assistant who answers queries based on chunks retrieved from a document store. Your answer will be passed to json.loads, it should be pure JSON without any Python comments, chunk markers, or other non-JSON elements. Include keys "implied_query", "query_type" and "related_concepts" following the instructions below and using the Query and Conversation history provided at the bottom.
+     
+*implied_query": Rephrase the query below in light of the conversation history without changing the voice, tense or mood. If it is a question, it should remain a question. If it is a declaration, it should remain a declaration. If it is an injunction, it should remain an injuction.
+
+*query_type: Provide a concise, abstract description of its fundamental purpose or information-seeking goal. This description should characterize the type of request being made, focusing on the query's function rather than its specific subject matter. The description should be general enough to apply to a range of similar queries, yet specific enough to distinguish between different types of information requests or tasks. 
+Special cases are:
+- "Request for an overview of the document store" (a query about the overall content of the document store, or the knowledge available to you, as opposed to a specific topic.).
+- "Request about a specific topic".
+- "Request to count documents relevant to a topic or keyword".
+- "Question about the performance or identity of the agent" (a query challenging the quality of an answer falls under this)
+
+*related_concepts: State concepts that are related to the query (just state them without using the word concepts or other metalanguage). You may not give any other answer.
+
+Query: {question}
+
+Conversation history: {history}"""
+
+    return PromptTemplate.from_template(template)
+
+def get_query_preprocessing_prompt_original() -> PromptTemplate:
+
+    template_original = """Your answer will be passed to json.loads, it should be pure JSON without any Python comments, chunk markers, or other non-JSON elements. Include keys "implied_query" and "related_concepts" following the instructions below and using the Query and Conversation history provided at the bottom.
+     
+*implied_query": Rephrase the query below in light of the conversation history without changing the voice, tense or mood. If it is a question, it should remain a question. If it is a declaration, it should remain a declaration. If it is an injunction, it should remain an injuction.
+
+*related_concepts: State concepts that are related to the query (just state them without using the word concepts or other metalanguage). You may not give any other answer.
+
+Query: {question}
+
+Conversation history: {history}"""
+
+    return PromptTemplate.from_template(template_original)
+    
+prompt_query_preprocessing = get_query_preprocessing_prompt()
+
+query_preprocessing_chain = (
+    prompt_query_preprocessing
+    | llm
+    | StrOutputParser()
+)
+
+
+use_case_vs = ragpoc.vdb.get_vector_store(client, "RAG_use_cases")
+
+history = ""
+
+query_text = "How does EBA regulate xVAs?"
+
+query_preprocess_out = json.loads(query_preprocessing_chain.invoke({'question': query_text, 'history': history}))
+
+use_case_vs.similarity_search_with_score(query = query_preprocess_out['query_type'], alpha = 0)

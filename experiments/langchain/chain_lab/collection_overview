@@ -1,0 +1,59 @@
+import json
+import rag_proof_of_concept as ragpoc
+from langchain_openai import ChatOpenAI
+from langchain.prompts import PromptTemplate
+from langchain.schema.output_parser import StrOutputParser
+from langchain.schema.document import Document
+
+
+from langchain_weaviate.vectorstores import WeaviateVectorStore
+from weaviate.client import WeaviateClient
+
+# Internal imports
+from rag_proof_of_concept.utils import ChunkGranularity
+from rag_proof_of_concept.vdb import FilterSpecs, fetch_from_collection
+
+config = ragpoc.utils.load_config()
+
+llm = ChatOpenAI(model=config['llm']['model'])
+client = ragpoc.vdb.get_weaviate_client(local=config['vdb']['local'])
+knowledge_vs = ragpoc.vdb.get_vector_store(client, config['vdb']['collection'])
+use_case_vs = ragpoc.vdb.get_vector_store(client, "RAG_use_cases")
+
+from typing import List
+    
+all_docs = fetch_from_collection(
+    client, 
+    config['vdb']['collection'],
+    limit=10,
+    filter_specs=FilterSpecs({"granularity": [ChunkGranularity.DOCUMENT_SUMMARY.value, True]}))
+
+from rag_proof_of_concept.context import format_context
+
+def get_collection_overview_prompt() -> PromptTemplate:
+    template = """You are an assistant for question-answering tasks. The question below asks for an overview of the knowledge base. The context provided contains a summary of all documents available in the knowledge base. Answer the question using the context provided. You may cite the context uuids in square brackets (print only groups of hexadecimal numbers in square brackets). Use a {style} writing style, no matter what the style of the question and context is. Do not repeat the question.
+
+Use Markdown to format your answer but do not add a title. You may use bullet points but only if they add clarity to the answer.
+
+If the question includes instructions about the format of the answer, those instructions take precedence over any other formatting guidance.
+Question: {question}
+Context: {context}"""
+
+    return PromptTemplate.from_template(template)
+
+answer_chain = (
+    get_collection_overview_prompt()
+    | llm
+    | StrOutputParser()
+)
+
+
+query_text = "What is in my documents?"
+
+response = answer_chain.invoke({
+    'question': query_text, 
+    'context': format_context(all_docs, include_granularity=False),
+    'style': config['chatbot']['conversation_style']})
+
+
+
