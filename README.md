@@ -53,3 +53,7 @@ docker compose up
 ```
 
 Finally open the ipynb files in VSCode or any other editor that supports Jupyter notebooks. Make sure to use the virtual environment managed by poetry for this project (in VSCode this is a drop-down menu choice).
+
+```bash
+poetry run streamlit run chat.py
+```
